@@ -30,6 +30,7 @@ from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder
 import torch
 import vllm.envs as envs
 import zmq
+import time
 
 # First Party
 from lmcache.integration.vllm.utils import (
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
     from vllm.v1.request import Request
 
 logger = init_logger(__name__)
-
+_saved_request_ids: set[str] = set()
 
 def get_zmq_rpc_path_lmcache(
     role: KVConnectorRole,
@@ -493,6 +494,9 @@ class LMCacheConnectorV1Impl:
         attn_metadata = forward_context.attn_metadata
         if attn_metadata is None:
             logger.warning("In connector.start_load_kv, but the attn_metadata is None")
+            raise RuntimeError(
+                "In connector.start_load_kv, but the attn_metadata is None"
+            )
             return
 
         assert self.lmcache_engine is not None
@@ -585,6 +589,11 @@ class LMCacheConnectorV1Impl:
         Args:
             layer_name: the name of that layer
         """
+
+        logger.debug(
+            f"Waiting for layer {layer_name} to be loaded"
+        )
+
         if self.layerwise_retrievers:
             logger.debug(f"Waiting for layer {self.current_layer} to be loaded")
 
@@ -617,6 +626,12 @@ class LMCacheConnectorV1Impl:
             attn_metadata (AttentionMetadata): the attention metadata.
             **kwargs: additional arguments for the save operation.
         """
+
+        logger.debug(
+            "Saving KV layer %s, kv_layer shape: %s",
+            layer_name,
+            kv_layer.shape,
+        )
 
         if not self.use_layerwise:
             return
@@ -703,6 +718,7 @@ class LMCacheConnectorV1Impl:
 
     @_lmcache_nvtx_annotate
     def wait_for_save(self):
+        t = time.perf_counter()
         """Blocking until the KV cache is saved to the connector buffer."""
         if self.kv_role == "kv_consumer":
             # Don't do save if the role is kv_consumer
@@ -713,15 +729,27 @@ class LMCacheConnectorV1Impl:
                 next(layerwise_storer)
             return
 
+        connector_metadata_t = time.perf_counter()
         connector_metadata = self._parent._get_connector_metadata()
         assert isinstance(connector_metadata, LMCacheConnectorMetadata)
+        logger.debug(
+            "Get connector metadata took %.3f seconds",
+            time.perf_counter() - connector_metadata_t,
+        )
 
         assert len(self.kv_caches) > 0
         kvcaches = list(self.kv_caches.values())
+        logger.debug(
+            "KV caches shape: %s", [kv.shape for kv in kvcaches]
+        )
 
         assert self.lmcache_engine is not None
 
         for request in connector_metadata.requests:
+            logger.debug(
+                f"request info: {request}"
+            )
+
             save_spec = request.save_spec
             if save_spec is None or not save_spec.can_save:
                 continue
@@ -733,9 +761,20 @@ class LMCacheConnectorV1Impl:
             slot_mapping = request.slot_mapping
             assert isinstance(slot_mapping, torch.Tensor)
             assert len(slot_mapping) == len(token_ids)
+            logger.debug(
+                "Slot mapping shape: %s, token ids shape: %s",
+                slot_mapping.shape,
+                token_ids.shape,
+            )
 
+            slot_mapping_t = time.perf_counter()
             # TODO: have a pre-allocated buffer to hold the slot_mappings
             slot_mapping = slot_mapping.cuda()
+            logger.debug(
+                "Convert slot mapping to CUDA took %.3f seconds",
+                time.perf_counter() - slot_mapping_t,
+            )
+
             # NOTE: In PD setting, lmcache_engine.lookup() will always return
             # 0 if there is no local storage configured. In this case, we
             # should rely on the slip_leading_tokens in save_spec to avoid
@@ -766,6 +805,7 @@ class LMCacheConnectorV1Impl:
                 skip_leading_tokens,
                 request.req_id,
             )
+            store_cost_t = time.perf_counter()
             self.lmcache_engine.store(
                 token_ids,
                 mask=store_mask,
@@ -773,14 +813,40 @@ class LMCacheConnectorV1Impl:
                 slot_mapping=slot_mapping,
                 offset=skip_leading_tokens,
             )
+            store_cost = time.perf_counter() - store_cost_t
+            logger.debug(
+                "Storing KV cache for request %s took %.3f seconds",
+                request.req_id,
+                store_cost,
+            )
 
             # NOTE(Jiayi): We assume all tokens are saved
             save_spec.skip_leading_tokens = len(token_ids)
 
+            _saved_request_ids.add(str(request.req_id))
+            logger.info(f"self id: {id(self)}")
+            logger.info(
+                "saved requests set: %s",
+                _saved_request_ids
+            )
+
+        wait_for_save_time = time.perf_counter() - t
+        logger.info(
+            "Waiting for KV save to finish took %.3f seconds", wait_for_save_time
+        )
+
     def get_finished(
         self, finished_req_ids: set[str]
     ) -> tuple[Optional[set[str]], Optional[set[str]]]:
-        return None, None
+        returned_ids = finished_req_ids.intersection(_saved_request_ids)
+        # return None, None
+        logger.debug(
+            "Get finished requests: %s, saved request ids: %s, returned ids: %s",
+            finished_req_ids,
+            _saved_request_ids,
+            returned_ids,
+        )
+        return (returned_ids, _saved_request_ids)
 
     ###################
     # Scheduler side APIs
@@ -972,5 +1038,33 @@ class LMCacheConnectorV1Impl:
             return_params = {
                 "first_tok": request._output_token_ids[0],
             }
+        
+        # Check if the request is already saved
+        logger.info(
+            "Checking if request %s is already saved, saved_requests: %s",
+            str(request.request_id),
+            _saved_request_ids,
+        )
+        logger.info(f"self id: {id(self)}")
+        logger.debug(
+            f"request info in request_finished: {request}"
+        )
+        print(f"request.request_id = {request.request_id!r}")
+        print(f"saved_requests = {_saved_request_ids}")
 
-        return 0, return_params
+        if str(request.request_id) in _saved_request_ids:
+            # If the request is already saved, we don't need to save it again
+            logger.info(
+                "Request %s is already saved, skip saving again", request.request_id
+            )
+            # _saved_request_ids.remove(str(request.request_id))
+            logger.info(
+                "Removed request %s from saved requests set, remaining length: %d",
+                request.request_id,
+                len(_saved_request_ids),
+            )
+            return False, return_params
+        else:
+            # If the request is not saved, we need to save it
+            logger.info("Request %s is not saved, saving it now", request.request_id)
+            return True, return_params
