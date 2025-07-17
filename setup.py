@@ -17,6 +17,9 @@ BUILDING_SDIST = "sdist" in sys.argv or os.environ.get("NO_CUDA_EXT", "0") == "1
 # New environment variable to choose between CUDA and HIP
 BUILD_WITH_HIP = os.environ.get("BUILD_WITH_HIP", "0") == "1"
 
+# Build with GCOS support: BUILD_WITH_GCOS=1 GCOS_PATH=/path/to/gcos pip install -e .
+BUILD_WITH_GCOS = os.environ.get("BUILD_WITH_GCOS", "0") == "1"
+GCOS_PATH = os.environ.get("GCOS_PATH", "/Users/bytedance/dev/GCOS")
 
 def hipify_wrapper() -> None:
     # Third Party
@@ -163,9 +166,75 @@ def source_dist_extension() -> tuple[list, dict]:
     return [], {}
 
 
+def gcos_extension() -> tuple[list, dict]:
+    from torch.utils import cpp_extension
+
+    print("Building GCOS extensions")
+
+    # TODO Check for GCOS availability
+    gcos_include = os.path.join(GCOS_PATH, "storage/lib/nvm/include")
+    gcos_lib = os.path.join(GCOS_PATH, "storage/lib/nvm/lib")
+
+    if not os.path.exists(gcos_include):
+        raise RuntimeError(f"GCOS headers not found at {gcos_include}")
+
+    # GCOS-specific sources
+    gcos_sources = [
+        "csrc/pybind.cpp",
+        "csrc/mem_kernels.cu",
+        "csrc/cal_cdf.cu",
+        "csrc/ac_enc.cu",
+        "csrc/ac_dec.cu",
+        "csrc/pos_kernels.cu",
+        "csrc/gcos_ops.cpp",  # New GCOS binding file
+    ]
+
+    ext_modules = [
+        cpp_extension.CUDAExtension(
+            "lmcache.c_ops",
+            sources=gcos_sources,
+            include_dirs=[
+                gcos_include,
+                os.path.join(gcos_include, "buffer"),
+                os.path.join(gcos_include, "multi_ssd"),
+            ],
+            library_dirs=[gcos_lib],
+            libraries=["gcos_nvm", "cuda", "cudart"],
+            extra_compile_args={
+                "cxx": [
+                    "-D_GLIBCXX_USE_CXX11_ABI=0",
+                    "-DWITH_GCOS=1",
+                    "-std=c++17",
+                ],
+                "nvcc": [
+                    "-D_GLIBCXX_USE_CXX11_ABI=0",
+                    "-DWITH_GCOS=1",
+                    "--expt-relaxed-constexpr",
+                ],
+            },
+        ),
+        # Additional GCOS-specific module
+        cpp_extension.CUDAExtension(
+            "lmcache.gcos_ops",
+            sources=["csrc/gcos_ops.cpp"],
+            include_dirs=[gcos_include],
+            library_dirs=[gcos_lib],
+            libraries=["gcos_nvm"],
+            extra_compile_args={
+                "cxx": ["-DWITH_GCOS=1", "-std=c++17"],
+            },
+        ),
+    ]
+
+    cmdclass = {"build_ext": cpp_extension.BuildExtension}
+    return ext_modules, cmdclass
+
+
 if __name__ == "__main__":
     if BUILDING_SDIST:
         get_extension = source_dist_extension
+    elif BUILD_WITH_GCOS:
+        get_extension = gcos_extension
     elif BUILD_WITH_HIP:
         get_extension = rocm_extension
     else:

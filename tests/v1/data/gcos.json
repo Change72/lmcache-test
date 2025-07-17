@@ -1,0 +1,36 @@
+{
+  "version": 0,
+  "comment": "GCOS configuration for LMCache testing and development",
+  "disks": {
+    "number": 4,
+    "paths": [
+      "/dev/libnvm0",
+      "/dev/libnvm1", 
+      "/dev/libnvm2",
+      "/dev/libnvm3"
+    ],
+    "namespace_number": 1,
+    "block_size": 512,
+    "capacity_bytes": 1073741824000,
+    "reserve_max_queue_pair_num": 128
+  },
+  "namespaces": [
+    {
+      "id": 1,
+      "cpu": {
+        "qps": 16,
+        "queue_depth": 64
+      },
+      "gpu": {
+        "num": 1,
+        "qps": 64,
+        "queue_depth": 128
+      },
+      "zone_chunk_sizes_by_KB": {
+        "sb": 1024,
+        "meta": 4096,
+        "data": 8192
+      }
+    }
+  ]
+}

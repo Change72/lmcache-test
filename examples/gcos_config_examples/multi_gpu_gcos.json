@@ -1,0 +1,53 @@
+{
+  "version": 0,
+  "comment": "Multi-GPU GCOS configuration for high-performance LMCache deployment",
+  "disks": {
+    "number": 8,
+    "paths": [
+      "/dev/libnvm0",
+      "/dev/libnvm1",
+      "/dev/libnvm2",
+      "/dev/libnvm3",
+      "/dev/libnvm4",
+      "/dev/libnvm5",
+      "/dev/libnvm6",
+      "/dev/libnvm7"
+    ],
+    "namespace_number": 1,
+    "block_size": 512,
+    "capacity_bytes": 15163795927768,
+    "reserve_max_queue_pair_num": 256
+  },
+  "namespaces": [
+    {
+      "id": 1,
+      "cpu": {
+        "qps": 64,
+        "queue_depth": 128
+      },
+      "gpu": {
+        "num": 8,
+        "qps": 256,
+        "queue_depth": 2048
+      },
+      "zone_chunk_sizes_by_KB": {
+        "sb": 2048,
+        "meta": 8192,
+        "data": 32768
+      }
+    }
+  ],
+  "performance": {
+    "comment": "Optimized for multi-GPU tensor parallel workloads",
+    "prefetch_threads": 16,
+    "io_completion_threads": 32,
+    "batch_size": 64,
+    "enable_numa_aware_allocation": true,
+    "gpu_direct_rdma": true
+  },
+  "reliability": {
+    "enable_error_correction": true,
+    "retry_attempts": 3,
+    "timeout_ms": 5000
+  }
+}

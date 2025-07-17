@@ -1,0 +1,33 @@
+{
+  "version": 0,
+  "comment": "Basic GCOS configuration for single NVMe device setup",
+  "disks": {
+    "number": 1,
+    "paths": [
+      "/dev/libnvm0"
+    ],
+    "namespace_number": 1,
+    "block_size": 512,
+    "capacity_bytes": 1073741824000,
+    "reserve_max_queue_pair_num": 64
+  },
+  "namespaces": [
+    {
+      "id": 1,
+      "cpu": {
+        "qps": 8,
+        "queue_depth": 32
+      },
+      "gpu": {
+        "num": 1,
+        "qps": 32,
+        "queue_depth": 128
+      },
+      "zone_chunk_sizes_by_KB": {
+        "sb": 1024,
+        "meta": 2048,
+        "data": 4096
+      }
+    }
+  ]
+}

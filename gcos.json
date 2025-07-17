@@ -1,0 +1,47 @@
+{
+  "version": 0,
+  "comment": "GCOS configuration for LMCache production deployment",
+  "disks": {
+    "number": 4,
+    "paths": [
+      "/dev/libnvm0",
+      "/dev/libnvm1",
+      "/dev/libnvm2", 
+      "/dev/libnvm3"
+    ],
+    "namespace_number": 1,
+    "block_size": 512,
+    "capacity_bytes": 3790948981942,
+    "reserve_max_queue_pair_num": 128
+  },
+  "namespaces": [
+    {
+      "id": 1,
+      "cpu": {
+        "qps": 32,
+        "queue_depth": 64
+      },
+      "gpu": {
+        "num": 1,
+        "qps": 128,
+        "queue_depth": 1024
+      },
+      "zone_chunk_sizes_by_KB": {
+        "sb": 1024,
+        "meta": 4096,
+        "data": 16384
+      }
+    }
+  ],
+  "performance": {
+    "comment": "Performance tuning parameters for LMCache workloads",
+    "prefetch_threads": 8,
+    "io_completion_threads": 16,
+    "batch_size": 32
+  },
+  "logging": {
+    "level": "INFO",
+    "enable_performance_metrics": true,
+    "log_io_operations": false
+  }
+}

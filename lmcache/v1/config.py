@@ -105,6 +105,8 @@ class LMCacheEngineConfig:
     weka_path: Optional[str] = None
     # (Optional) The path under the File-based backend cache will be stored
     gds_path: Optional[str] = None
+    # (Optional) The path under the GCOS filesystem that the cache will be stored
+    gcos_path: Optional[str] = None
     # (Optional) GDS/CuFile related configurations
     # Size of CuFile Buffer in MiB
     cufile_buffer_size: Optional[int] = None
